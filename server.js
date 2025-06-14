@@ -46,43 +46,86 @@ Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
     });
 
     // Koneksi SSH (gunakan ssh di shell, bukan library ssh)
-    const shell = pty.spawn('bash', [], {
-      name: 'xterm-color',
-      cols: 80,
-      rows: 30,
-      cwd: process.env.HOME,
-      env: process.env
+    socket.on('ssh', () => {
+      const shell = pty.spawn('bash', [], {
+        name: 'xterm-color',
+        cols: 80,
+        rows: 30,
+        cwd: process.env.HOME,
+        env: process.env
+      });
+
+      shell.on('data', (data) => {
+        console.log(data);
+        io.emit('message', data);
+      });
+
+      socket.on('input', (data) => {
+        io.write(data);
+      });
+
+      socket.on('resize', (size) => {
+        io.resize(size.cols, size.rows);
+      });
+
+      socket.on('disconnect', () => {
+        console.log('Client disconnected', socket.id);
+        shell.kill();
+      });
+
+      socket.on('message', (msg) => {
+        console.log('Received message:', msg);
+        shell.write(msg);
+        console.log('🖋️ Sent to shell:', JSON.stringify(msg));
+        // Kirim balik ke semua client (broadcast)
+        // io.emit('message', msg);
+      });
+
+      //socket.on('disconnect', () => {
+      //  console.log('Client disconnected', socket.id);
+      //});
+    });
+    
+    let term = null;
+
+    socket.on('open-terminal', () => {
+      const os = require('os');
+      const pty = require('node-pty');
+
+      const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
+      term = pty.spawn(shell, [], {
+        name: 'xterm-color',
+        cols: 80,
+        rows: 24,
+        cwd: process.env.HOME,
+        env: process.env
+      });
+
+      term.on('data', (data) => {
+        socket.emit('terminal-output', data);
+      });
+
+      console.log('Terminal opened');
     });
 
-    shell.on('data', (data) => {
-      console.log(data);
-      io.emit('message', data);
+    socket.on('terminal-input', (data) => {
+      if (term) {
+        term.write(data);
+      }
     });
 
-    socket.on('input', (data) => {
-      io.write(data);
-    });
-
-    socket.on('resize', (size) => {
-      io.resize(size.cols, size.rows);
+    socket.on('resize', ({ cols, rows }) => {
+      if (term) {
+        term.resize(cols, rows);
+      }
     });
 
     socket.on('disconnect', () => {
-      console.log('Client disconnected', socket.id);
-      shell.kill();
+      console.log('Client disconnected:', socket.id);
+      if (term) {
+        term.kill();
+      }
     });
-
-    socket.on('message', (msg) => {
-      console.log('Received message:', msg);
-      shell.write(msg);
-      console.log('🖋️ Sent to shell:', JSON.stringify(msg));
-      // Kirim balik ke semua client (broadcast)
-      // io.emit('message', msg);
-    });
-
-    //socket.on('disconnect', () => {
-    //  console.log('Client disconnected', socket.id);
-    //});
   });
 
   server.listen(6001, () => {
